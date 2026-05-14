@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>CRM: Брони + Журнал | Маска телефона + Звонок</title>
+    <title>CRM: Брони + Журнал | Защита от дублей</title>
     <style>
         * { box-sizing: border-box; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
         body { background: #eef2f5; margin: 0; padding: 12px; }
@@ -35,9 +35,9 @@
         .booking-info { flex: 1; }
         .booking-actions { display: flex; gap: 8px; }
         .slot-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; max-height: 300px; overflow-y: auto; }
-        .slot-btn { background: #e8f0fe; border: 1px solid #cbdde6; border-radius: 40px; padding: 10px 16px; cursor: pointer; font-size: 0.85rem; }
+        .slot-btn { background: #e8f0fe; border: 1px solid #cbdde6; border-radius: 40px; padding: 10px 16px; cursor: pointer; font-size: 0.85rem; transition: 0.1s; }
         .slot-btn:hover { background: #cfe7f0; }
-        .slot-btn.selected { background: #2c7da0; color: white; }
+        .slot-btn.selected { background: #2c7da0; color: white; border-color: #2c7da0; }
         .profile-card { background: #f8fafc; border-radius: 16px; padding: 14px; margin-bottom: 12px; border-left: 4px solid #2c7da0; cursor: pointer; transition: 0.1s; }
         .profile-card:hover { background: #eef3fc; }
         .info-row { display: flex; margin: 10px 0; padding: 6px 0; border-bottom: 1px solid #e2edf2; }
@@ -60,13 +60,16 @@
         .phone-link { color: #2c7da0; text-decoration: none; font-weight: 500; }
         .phone-link:hover { text-decoration: underline; }
         .journal-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+        .legend { display: flex; gap: 16px; margin-bottom: 12px; font-size: 0.75rem; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-color { width: 20px; height: 20px; border-radius: 4px; }
         @media (max-width: 680px) { .btn { padding: 8px 14px; } .info-label { width: 90px; } .modal-card { padding: 20px; } .slot-time { width: 70px; } .booking-card { flex-direction: column; align-items: flex-start; } .booking-actions { align-self: flex-end; } .modal-close-x { top: 12px; right: 16px; font-size: 24px; } .journal-header { flex-direction: column; align-items: stretch; gap: 10px; } .journal-header button { width: 100%; } }
     </style>
 </head>
 <body>
 <div class="main-dashboard">
     <h1>📋 Сервис-менеджер</h1>
-    <div class="sub">Бронирование · Журнал · Звонок по клику</div>
+    <div class="sub">Бронирование · Журнал · Защита от дублирования</div>
     <div class="button-bar">
         <button class="btn btn-primary" id="openWorkersBtn">👥 Исполнители</button>
         <button class="btn btn-primary" id="openPriceBtn">💰 Прайс</button>
@@ -100,7 +103,7 @@
 <div id="journalModal" class="modal"><div class="modal-card full-modal-card"><span class="modal-close-x">&times;</span><div id="journalApp"></div><button class="btn btn-outline close-modal-btn close-btn">❌ Закрыть</button></div></div>
 
 <script>
-    // ---------- ДАННЫЕ С СОХРАНЕНИЕМ В LOCALSTORAGE ----------
+    // ---------- ДАННЫЕ ----------
     let workers = [], services = [], clients = [], journal = [];
     let bookings = [];
     let nextWorkerId = 100, nextServiceId = 200, nextClientId = 300, nextJournalId = 1000, nextBookingId = 500;
@@ -190,30 +193,84 @@
     function timeToTimeStr(min) { let h = Math.floor(min / 60), m = min % 60; return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`; }
     function formatDuration(minutes) { let h = Math.floor(minutes / 60), m = minutes % 60; return h > 0 ? (m > 0 ? `${h}ч ${m}м` : `${h}ч`) : `${m}м`; }
 
-    function hasBookingConflict(workerId, date, startMin, endMin, excludeId = null) {
+    // ========== ЗАЩИТА ОТ ДУБЛЕЙ ==========
+    function isWorkerDuplicate(lastName, firstName, middleName, phone, excludeId = null) {
+        return workers.some(w => {
+            if (excludeId !== null && w.id === excludeId) return false;
+            return w.lastName.toLowerCase() === lastName.toLowerCase() &&
+                   w.firstName.toLowerCase() === firstName.toLowerCase() &&
+                   w.middleName.toLowerCase() === middleName.toLowerCase() &&
+                   w.phone === phone;
+        });
+    }
+
+    function isServiceDuplicate(name, excludeId = null) {
+        return services.some(s => {
+            if (excludeId !== null && s.id === excludeId) return false;
+            return s.name.toLowerCase() === name.toLowerCase();
+        });
+    }
+
+    function isClientDuplicate(lastName, firstName, middleName, phone, excludeId = null) {
+        return clients.some(c => {
+            if (excludeId !== null && c.id === excludeId) return false;
+            return c.lastName.toLowerCase() === lastName.toLowerCase() &&
+                   c.firstName.toLowerCase() === firstName.toLowerCase() &&
+                   c.middleName.toLowerCase() === middleName.toLowerCase() &&
+                   c.phone === phone;
+        });
+    }
+
+    // Проверка, что у клиента нет других броней в это же время (даже к другим мастерам)
+    function isClientBusyAtTime(clientId, date, startMin, serviceDuration, excludeId = null) {
+        const endMin = startMin + serviceDuration;
         return bookings.some(b => {
             if (excludeId !== null && b.id === excludeId) return false;
-            if (b.workerId !== workerId || b.date !== date || b.status === 'Отменена') return false;
+            if (b.clientId !== clientId || b.date !== date) return false;
+            if (b.status === 'Отменена') return false;
             const bStart = timeToMinutes(b.startTime);
-            const bEnd = timeToMinutes(b.endTime);
+            const service = getServiceById(b.serviceId);
+            if (!service) return false;
+            const bEnd = bStart + service.durationMinutes;
             return startMin < bEnd && endMin > bStart;
         });
     }
 
-    function getAvailableSlots(worker, date, serviceDuration, gap = gapMinutes) {
+    // === ЛОГИКА БЛОКИРОВКИ СЛОТОВ ===
+    function isTimeSlotOccupied(workerId, date, slotStartMin, excludeId = null) {
+        const slotEndMin = slotStartMin + 30;
+        return bookings.some(b => {
+            if (excludeId !== null && b.id === excludeId) return false;
+            if (b.workerId !== workerId || b.date !== date) return false;
+            if (b.status === 'Отменена') return false;
+            const bStart = timeToMinutes(b.startTime);
+            const service = getServiceById(b.serviceId);
+            if (!service) return false;
+            const bBlockEnd = bStart + service.durationMinutes + gapMinutes;
+            return slotStartMin < bBlockEnd && slotEndMin > bStart;
+        });
+    }
+
+    function canStartBookingAt(worker, date, startMin, serviceDuration, gap) {
+        const blockEnd = startMin + serviceDuration + gap;
+        for (let check = startMin; check < blockEnd; check += 30) {
+            if (isTimeSlotOccupied(worker.id, date, check)) return false;
+        }
+        return true;
+    }
+
+    function getAvailableSlotsForBooking(worker, date, serviceDuration, gap = gapMinutes) {
         let dowMap = { 0: 'вс', 1: 'пн', 2: 'вт', 3: 'ср', 4: 'чт', 5: 'пт', 6: 'сб' };
         let dow = dowMap[new Date(date).getDay()];
         let hours = worker.workHours?.[dow] || [];
         if (!hours.length) return [];
-        let start = hours[0].split(':').map(Number), end = hours[1].split(':').map(Number);
-        let workStart = start[0] * 60 + start[1], workEnd = end[0] * 60 + end[1];
+        let workStart = timeToMinutes(hours[0]);
+        let workEnd = timeToMinutes(hours[1]);
         let slots = [];
-        let current = workStart;
-        while (current + serviceDuration <= workEnd) {
-            if (!hasBookingConflict(worker.id, date, current, current + serviceDuration)) {
-                slots.push({ start: timeToTimeStr(current), end: timeToTimeStr(current + serviceDuration) });
+        for (let start = workStart; start + serviceDuration <= workEnd; start += 30) {
+            if (canStartBookingAt(worker, date, start, serviceDuration, gap)) {
+                slots.push({ start: timeToTimeStr(start), end: timeToTimeStr(start + serviceDuration) });
             }
-            current += (serviceDuration + gap);
         }
         return slots;
     }
@@ -297,16 +354,26 @@
             <div class="flex-btns"><button id="saveBookingBtn" class="btn btn-primary">✅ Сохранить</button><button id="cancelBookingBtn" class="btn btn-outline">❌ Отмена</button></div></div>`;
         document.body.appendChild(modal);
         modal.querySelector('.modal-close-x').onclick = () => modal.remove();
+        
         function renderSlots() {
             let date = modal.querySelector('#bookDate').value, workerId = parseInt(modal.querySelector('#bookWorker').value), serviceId = parseInt(modal.querySelector('#bookService').value), currentGap = parseInt(modal.querySelector('#bookingGap').value) || 30;
             let worker = getWorkerById(workerId), service = getServiceById(serviceId);
             let container = modal.querySelector('#slotsContainer');
             if (!date || !worker || !service) { container.innerHTML = '<div style="padding:20px; text-align:center">⚠️ Выберите дату, услугу и мастера</div>'; return; }
-            let slots = getAvailableSlots(worker, date, service.durationMinutes, currentGap);
+            let slots = getAvailableSlotsForBooking(worker, date, service.durationMinutes, currentGap);
             if (slots.length === 0) { container.innerHTML = '<div style="padding:20px; text-align:center">❌ Нет свободных слотов</div>'; return; }
             container.innerHTML = slots.map(s => `<button type="button" class="slot-btn" data-start="${s.start}">${s.start} — ${s.end}</button>`).join('');
-            if (prefill.startTime) { let btn = container.querySelector(`.slot-btn[data-start="${prefill.startTime}"]`); if (btn) btn.classList.add('selected'); }
-            container.querySelectorAll('.slot-btn').forEach(btn => btn.addEventListener('click', () => { container.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected')); btn.classList.add('selected'); selectedSlot = btn.dataset.start; }));
+            if (prefill.startTime) { 
+                let btn = container.querySelector(`.slot-btn[data-start="${prefill.startTime}"]`); 
+                if (btn) { btn.classList.add('selected'); selectedSlot = prefill.startTime; }
+            }
+            container.querySelectorAll('.slot-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    container.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    selectedSlot = btn.dataset.start;
+                });
+            });
         }
         modal.querySelector('#bookDate').value = prefill.date || new Date().toISOString().slice(0, 10);
         modal.querySelector('#bookWorker').value = prefill.workerId || workers[0]?.id || '';
@@ -316,6 +383,19 @@
         modal.querySelector('#bookWorker').addEventListener('change', renderSlots);
         modal.querySelector('#bookService').addEventListener('change', renderSlots);
         renderSlots();
+        
+        if (prefill.time) {
+            setTimeout(() => {
+                let container = modal.querySelector('#slotsContainer');
+                let btn = container.querySelector(`.slot-btn[data-start="${prefill.time}"]`);
+                if (btn) {
+                    container.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    selectedSlot = prefill.time;
+                }
+            }, 50);
+        }
+        
         modal.querySelector('#quickClientBtn').onclick = () => { showClientForm(null, () => { modal.remove(); showBookingForm(prefill); refreshAll(); }); };
         modal.querySelector('#saveBookingBtn').onclick = () => {
             let date = modal.querySelector('#bookDate').value, slot = selectedSlot || (modal.querySelector('#slotsContainer .slot-btn.selected')?.dataset.start);
@@ -324,6 +404,14 @@
             if (!date || !slot || isNaN(clientId) || isNaN(serviceId) || isNaN(workerId)) { alert('Заполните все поля и выберите слот'); return; }
             let service = getServiceById(serviceId), client = getClientById(clientId);
             if (!service || !client) return;
+            
+            // Проверка: не занят ли клиент в это время у другого мастера
+            const startMin = timeToMinutes(slot);
+            if (isClientBusyAtTime(clientId, date, startMin, service.durationMinutes, prefill.id)) {
+                alert(`❌ Клиент ${getClientShort(client)} уже занят в это время у другого мастера!`);
+                return;
+            }
+            
             gapMinutes = newGap;
             let finalPrice = calculateFinalPrice(service.price, client.discountPercent);
             let startTime = slot, endTime = timeToTimeStr(timeToMinutes(startTime) + service.durationMinutes);
@@ -334,7 +422,9 @@
             } else {
                 bookings.push({ id: nextBookingId++, date, startTime, endTime, clientId, serviceId, workerId, status, finalPrice });
             }
-            saveAll(); modal.remove(); refreshAll(); alert(prefill.id ? 'Бронь обновлена' : 'Бронь создана');
+            saveAll(); modal.remove(); refreshAll(); 
+            if (document.getElementById('fullBookingApp').innerHTML) renderDayScheduleModal(document.getElementById('fullBookingApp'));
+            alert(prefill.id ? 'Бронь обновлена' : 'Бронь создана');
         };
         modal.querySelector('#cancelBookingBtn').onclick = () => modal.remove();
     }
@@ -344,28 +434,47 @@
     function renderDayScheduleModal(container) {
         function render() {
             let dateStr = currentDayDate.toISOString().slice(0, 10);
-            let daySchedule = [];
+            let allSlots = [];
             workers.forEach(worker => {
                 let dowMap = { 0: 'вс', 1: 'пн', 2: 'вт', 3: 'ср', 4: 'чт', 5: 'пт', 6: 'сб' };
                 let dow = dowMap[new Date(dateStr).getDay()];
                 let hours = worker.workHours?.[dow] || [];
-                if (!hours.length) return;
-                let start = timeToMinutes(hours[0]), end = timeToMinutes(hours[1]);
-                for (let t = start; t < end; t += 30) {
-                    let time = timeToTimeStr(t);
-                    let booking = bookings.find(b => b.workerId === worker.id && b.date === dateStr && b.status !== 'Отменена' && timeToMinutes(b.startTime) === t);
-                    daySchedule.push({ time, workerId: worker.id, workerName: getWorkerShort(worker), booking });
+                if (hours.length) {
+                    let start = timeToMinutes(hours[0]);
+                    let end = timeToMinutes(hours[1]);
+                    for (let t = start; t < end; t += 30) {
+                        let time = timeToTimeStr(t);
+                        let booking = null;
+                        for (let b of bookings) {
+                            if (b.workerId !== worker.id || b.date !== dateStr || b.status === 'Отменена') continue;
+                            const service = getServiceById(b.serviceId);
+                            if (!service) continue;
+                            const bStart = timeToMinutes(b.startTime);
+                            const bBlockEnd = bStart + service.durationMinutes + gapMinutes;
+                            if (t >= bStart && t < bBlockEnd) {
+                                booking = b;
+                                break;
+                            }
+                        }
+                        allSlots.push({ time, workerId: worker.id, workerName: getWorkerShort(worker), booking });
+                    }
                 }
             });
-            daySchedule.sort((a, b) => a.time.localeCompare(b.time));
-            let times = [...new Set(daySchedule.map(s => s.time))];
-            let html = `<div class="calendar-nav"><button id="dayPrevBtn" class="btn btn-outline">◀ Пред</button><span style="font-weight:bold; font-size:1.2rem">${dateStr} (${currentDayDate.toLocaleDateString('ru-RU', { weekday: 'long' })})</span><button id="dayNextBtn" class="btn btn-outline">След ▶</button><button id="dayTodayBtn" class="btn btn-outline">Сегодня</button><button id="dayNewBookingBtn" class="btn btn-primary">➕ Новая бронь</button></div><div class="day-view">`;
+            allSlots.sort((a, b) => a.time.localeCompare(b.time));
+            let times = [...new Set(allSlots.map(s => s.time))];
+            let legendHtml = `<div class="legend">
+                <div class="legend-item"><div class="legend-color" style="background:#e8f0fe;"></div><span>🟢 Свободно</span></div>
+                <div class="legend-item"><div class="legend-color" style="background:#d4edda;"></div><span>✅ Подтверждённая бронь</span></div>
+                <div class="legend-item"><div class="legend-color" style="background:#fff3cd;"></div><span>⚠️ Предварительная бронь</span></div>
+            </div>`;
+            let html = `<div class="calendar-nav"><button id="dayPrevBtn" class="btn btn-outline">◀ Пред</button><span style="font-weight:bold; font-size:1.2rem">${dateStr} (${currentDayDate.toLocaleDateString('ru-RU', { weekday: 'long' })})</span><button id="dayNextBtn" class="btn btn-outline">След ▶</button><button id="dayTodayBtn" class="btn btn-outline">Сегодня</button><button id="dayNewBookingBtn" class="btn btn-primary">➕ Новая бронь</button></div>${legendHtml}<div class="day-view">`;
             times.forEach(time => {
-                let slotsAtTime = daySchedule.filter(s => s.time === time);
+                let slotsAtTime = allSlots.filter(s => s.time === time);
                 html += `<div class="day-slot"><div class="slot-time"><strong>${time}</strong></div><div style="flex:1">`;
                 slotsAtTime.forEach(slot => {
-                    if (!slot.booking) html += `<div class="slot-info available" data-date="${dateStr}" data-time="${time}" data-worker="${slot.workerId}">➕ ${slot.workerName} — свободно</div>`;
-                    else {
+                    if (!slot.booking) {
+                        html += `<div class="slot-info available" data-date="${dateStr}" data-time="${time}" data-worker="${slot.workerId}">➕ ${slot.workerName} — свободно</div>`;
+                    } else {
                         let statusClass = slot.booking.status === 'Подтверждена' ? 'booked-confirmed' : 'booked-preliminary';
                         let srv = getServiceById(slot.booking.serviceId);
                         let cl = getClientById(slot.booking.clientId);
@@ -382,6 +491,13 @@
             document.getElementById('dayTodayBtn')?.addEventListener('click', () => { currentDayDate = new Date(); renderDayScheduleModal(container); });
             document.getElementById('dayNewBookingBtn')?.addEventListener('click', () => showBookingForm({}));
             document.querySelectorAll('.slot-info.available').forEach(el => el.addEventListener('click', () => showBookingForm({ date: el.dataset.date, time: el.dataset.time, workerId: parseInt(el.dataset.worker) })));
+            document.querySelectorAll('.slot-info.booked-confirmed, .slot-info.booked-preliminary').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('complete-booking-slot')) return;
+                    let bookingId = parseInt(el.dataset.bookingId);
+                    if (bookingId) editBooking(bookingId);
+                });
+            });
             document.querySelectorAll('.complete-booking-slot').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); completeBooking(parseInt(btn.dataset.id)); renderDayScheduleModal(container); }));
         }
         render();
@@ -412,9 +528,9 @@
             let rows = '';
             pageEntries.forEach(e => {
                 let w = getWorkerById(e.workerId), s = getServiceById(e.serviceId), c = getClientById(e.clientId);
-                rows += `<tr><td style="padding:10px">${e.date}</td><td style="padding:10px">${w ? getWorkerShort(w) : '-'}</td><td style="padding:10px">${s ? s.name : '-'} (${s ? formatDuration(s.durationMinutes) : '-'})</span></td><td style="padding:10px">${e.finalPrice}₽</span></td><td style="padding:10px">${c ? getClientShort(c) : '-'}</span><tr><td style="padding:10px"><button class="btn btn-outline btn-sm edit-journal" data-id="${e.id}">✏️</button> <button class="btn danger-btn btn-sm delete-journal" data-id="${e.id}">🗑️</button></td></tr>`;
+                rows += `<tr><td style="padding:10px">${e.date}</td><td style="padding:10px">${w ? getWorkerShort(w) : '-'}</td><td style="padding:10px">${s ? s.name : '-'} (${s ? formatDuration(s.durationMinutes) : '-'})</span></td><td style="padding:10px">${e.finalPrice}₽</span></td><td style="padding:10px">${c ? getClientShort(c) : '-'}</span></td><td style="padding:10px"><button class="btn btn-outline btn-sm edit-journal" data-id="${e.id}">✏️</button> <button class="btn danger-btn btn-sm delete-journal" data-id="${e.id}">🗑️</button></span></td>`;
             });
-            document.getElementById('journalFullBody').innerHTML = rows || '<tr><td colspan="6" style="text-align:center; padding:20px">Нет записей</span><table>';
+            document.getElementById('journalFullBody').innerHTML = rows || '<tr><td colspan="6" style="text-align:center; padding:20px">Нет записей</span></td>';
             document.getElementById('journalPageInfo').innerHTML = `Страница ${currentJournalPage} из ${totalPages || 1} (всего ${filtered.length} записей)`;
             document.getElementById('journalPrevPage').disabled = currentJournalPage <= 1;
             document.getElementById('journalNextPage').disabled = currentJournalPage >= totalPages;
@@ -448,7 +564,7 @@
         renderTable();
     }
 
-    // ----- КАРТОЧКИ -----
+    // ----- КАРТОЧКИ С ЗАЩИТОЙ ОТ ДУБЛЕЙ -----
     function renderWorkersModal(container) { let filter = '';
         function render() {
             let filtered = workers.filter(w => `${w.lastName} ${w.firstName}`.toLowerCase().includes(filter));
@@ -484,6 +600,11 @@
             if (!ln || !fn || !mn || !spec || !ph) { alert('Все поля обязательны'); return; }
             let rawPhone = getRawPhone(ph);
             if (rawPhone.length < 10) { alert('Введите корректный номер телефона (не менее 10 цифр)'); return; }
+            // Проверка на дубликат
+            if (isWorkerDuplicate(ln, fn, mn, ph, isEdit ? worker.id : null)) {
+                alert(`❌ Исполнитель "${ln} ${fn} ${mn}" с таким телефоном уже существует!`);
+                return;
+            }
             if (isEdit) { worker.lastName = ln; worker.firstName = fn; worker.middleName = mn; worker.specialty = spec; worker.phone = ph; }
             else workers.push({ id: nextWorkerId++, lastName: ln, firstName: fn, middleName: mn, specialty: spec, phone: ph, workHours: { пн: ['09:00', '18:00'], вт: ['09:00', '18:00'], ср: ['09:00', '18:00'], чт: ['09:00', '18:00'], пт: ['09:00', '18:00'], сб: [], вс: [] } });
             saveAll(); modal.remove(); if (cb) cb(); refreshAll();
@@ -533,6 +654,11 @@
                 let name = modal.querySelector('#name').value.trim(), price = parseFloat(modal.querySelector('#price').value);
                 let total = (parseInt(modal.querySelector('#durationHours').value) || 0) * 60 + (parseInt(modal.querySelector('#durationMinutes').value) || 0);
                 if (!name || isNaN(price) || total <= 0) { alert('Заполните все поля'); return; }
+                // Проверка на дубликат услуги
+                if (isServiceDuplicate(name, isEdit ? service.id : null)) {
+                    alert(`❌ Услуга "${name}" уже существует в прайс-листе!`);
+                    return;
+                }
                 if (isEdit) { service.name = name; service.price = price; service.durationMinutes = total; }
                 else services.push({ id: nextServiceId++, name, price, durationMinutes: total });
                 saveAll(); modal.remove(); if (cb) cb(); refreshAll();
@@ -574,6 +700,11 @@
             let ln = modal.querySelector('#ln').value.trim() || '—', fn = modal.querySelector('#fn').value.trim() || '—', mn = modal.querySelector('#mn').value.trim(), ph = modal.querySelector('#ph').value.trim(), disc = parseInt(modal.querySelector('#disc').value) || 0;
             let rawPhone = getRawPhone(ph);
             if (rawPhone.length < 10 && rawPhone.length > 0) { alert('Введите корректный номер телефона (не менее 10 цифр)'); return; }
+            // Проверка на дубликат клиента
+            if (isClientDuplicate(ln, fn, mn, ph || '—', isEdit ? client.id : null)) {
+                alert(`❌ Клиент "${ln} ${fn} ${mn}" с таким телефоном уже существует!`);
+                return;
+            }
             if (isEdit) { client.lastName = ln; client.firstName = fn; client.middleName = mn; client.phone = ph; client.discountPercent = disc; }
             else clients.push({ id: nextClientId++, lastName: ln, firstName: fn, middleName: mn, phone: ph || '—', discountPercent: disc });
             saveAll(); modal.remove(); if (cb) cb(); refreshAll();
