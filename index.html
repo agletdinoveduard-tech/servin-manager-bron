@@ -59,19 +59,20 @@
         .time-select-group select { width: auto; flex: 1; margin-bottom: 0; }
         .phone-link { color: #2c7da0; text-decoration: none; font-weight: 500; }
         .phone-link:hover { text-decoration: underline; }
-        @media (max-width: 680px) { .btn { padding: 8px 14px; } .info-label { width: 90px; } .modal-card { padding: 20px; } .slot-time { width: 70px; } .booking-card { flex-direction: column; align-items: flex-start; } .booking-actions { align-self: flex-end; } .modal-close-x { top: 12px; right: 16px; font-size: 24px; } }
+        .journal-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+        @media (max-width: 680px) { .btn { padding: 8px 14px; } .info-label { width: 90px; } .modal-card { padding: 20px; } .slot-time { width: 70px; } .booking-card { flex-direction: column; align-items: flex-start; } .booking-actions { align-self: flex-end; } .modal-close-x { top: 12px; right: 16px; font-size: 24px; } .journal-header { flex-direction: column; align-items: stretch; gap: 10px; } .journal-header button { width: 100%; } }
     </style>
 </head>
 <body>
 <div class="main-dashboard">
     <h1>📋 Сервис-менеджер</h1>
-    <div class="sub">Бронирование · Журнал ·</div>
+    <div class="sub">Бронирование · Журнал · Звонок по клику</div>
     <div class="button-bar">
         <button class="btn btn-primary" id="openWorkersBtn">👥 Исполнители</button>
         <button class="btn btn-primary" id="openPriceBtn">💰 Прайс</button>
         <button class="btn btn-primary" id="openClientsBtn">🧑 Клиенты</button>
         <button class="btn btn-primary" id="openFullBookingBtn">📅 Расписание</button>
-        <button class="btn btn-primary" id="openJournalModalBtn">📋 Журнал</button>
+        <button class="btn btn-primary" id="openJournalModalBtn">📋 Журнал (все записи)</button>
         <button class="btn btn-outline" id="backupBtn">💾 Бэкап</button>
         <input type="file" id="restoreFileInput" accept=".json" style="display:none">
         <button class="btn btn-outline" id="restoreBtn">📂 Восстановить</button>
@@ -83,7 +84,13 @@
         </div>
         <div id="todayBookingsList"></div>
     </div>
-    <div class="card"><h3>📋 Журнал за сегодня</h3><div id="todayJournalList"></div></div>
+    <div class="card">
+        <div class="journal-header">
+            <h3 style="margin:0">📋 Журнал за сегодня</h3>
+            <button id="quickAddJournalBtn" class="btn btn-primary">📝 + Новая запись в журнал</button>
+        </div>
+        <div id="todayJournalList"></div>
+    </div>
 </div>
 
 <div id="workersModal" class="modal"><div class="modal-card"><span class="modal-close-x">&times;</span><div id="workersApp"></div><button class="btn btn-outline close-modal-btn close-btn">❌ Закрыть</button></div></div>
@@ -104,7 +111,6 @@
     let cachedFilteredJournal = null;
     let cachedFilterKey = '';
 
-    // ---------- СОХРАНЕНИЕ/ЗАГРУЗКА ----------
     function saveAll() { localStorage.setItem('crm_app_data', JSON.stringify({ workers, services, clients, journal, bookings, nextWorkerId, nextServiceId, nextClientId, nextJournalId, nextBookingId, gapMinutes })); }
     function loadFromLocal() {
         let raw = localStorage.getItem('crm_app_data');
@@ -174,7 +180,6 @@
         return phone;
     }
 
-    // ---------- ОСНОВНЫЕ ФУНКЦИИ ----------
     function getWorkerShort(w) { return w ? `${w.lastName} ${w.firstName.charAt(0)}.${w.middleName ? w.middleName.charAt(0) + '.' : ''}` : '??'; }
     function getClientShort(c) { return c ? `${c.lastName} ${c.firstName.charAt(0)}.${c.middleName ? c.middleName.charAt(0) + '.' : ''}` : '—'; }
     function getWorkerById(id) { return workers.find(w => w.id === id); }
@@ -407,9 +412,9 @@
             let rows = '';
             pageEntries.forEach(e => {
                 let w = getWorkerById(e.workerId), s = getServiceById(e.serviceId), c = getClientById(e.clientId);
-                rows += `<tr><td style="padding:10px">${e.date}</td><td style="padding:10px">${w ? getWorkerShort(w) : '-'}</td><td style="padding:10px">${s ? s.name : '-'} (${s ? formatDuration(s.durationMinutes) : '-'})</span></td><td style="padding:10px">${e.finalPrice}₽</span></td><td style="padding:10px">${c ? getClientShort(c) : '-'}</span></td><td style="padding:10px"><button class="btn btn-outline btn-sm edit-journal" data-id="${e.id}">✏️</button> <button class="btn danger-btn btn-sm delete-journal" data-id="${e.id}">🗑️</button></td></tr>`;
+                rows += `<tr><td style="padding:10px">${e.date}</td><td style="padding:10px">${w ? getWorkerShort(w) : '-'}</td><td style="padding:10px">${s ? s.name : '-'} (${s ? formatDuration(s.durationMinutes) : '-'})</span></td><td style="padding:10px">${e.finalPrice}₽</span></td><td style="padding:10px">${c ? getClientShort(c) : '-'}</span><tr><td style="padding:10px"><button class="btn btn-outline btn-sm edit-journal" data-id="${e.id}">✏️</button> <button class="btn danger-btn btn-sm delete-journal" data-id="${e.id}">🗑️</button></td></tr>`;
             });
-            document.getElementById('journalFullBody').innerHTML = rows || '<tr><td colspan="6" style="text-align:center; padding:20px">Нет записей</span></tr>';
+            document.getElementById('journalFullBody').innerHTML = rows || '<tr><td colspan="6" style="text-align:center; padding:20px">Нет записей</span><table>';
             document.getElementById('journalPageInfo').innerHTML = `Страница ${currentJournalPage} из ${totalPages || 1} (всего ${filtered.length} записей)`;
             document.getElementById('journalPrevPage').disabled = currentJournalPage <= 1;
             document.getElementById('journalNextPage').disabled = currentJournalPage >= totalPages;
@@ -443,7 +448,7 @@
         renderTable();
     }
 
-    // ----- КАРТОЧКИ С ТЕЛЕФОНОМ (ЗВОНОК ПО КЛИКУ И МАСКА) -----
+    // ----- КАРТОЧКИ -----
     function renderWorkersModal(container) { let filter = '';
         function render() {
             let filtered = workers.filter(w => `${w.lastName} ${w.firstName}`.toLowerCase().includes(filter));
@@ -583,6 +588,7 @@
     document.getElementById('openFullBookingBtn').onclick = () => openModal('fullBookingModal', renderDayScheduleModal, 'fullBookingApp');
     document.getElementById('openJournalModalBtn').onclick = () => openModal('journalModal', renderJournalFullModal, 'journalApp');
     document.getElementById('newBookingBtn').onclick = () => showBookingForm({});
+    document.getElementById('quickAddJournalBtn').onclick = () => showAddJournalForm();
     document.getElementById('backupBtn').onclick = () => { let a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ workers, services, clients, journal, bookings, nextWorkerId, nextServiceId, nextClientId, nextJournalId, nextBookingId, gapMinutes })], { type: 'application/json' })); a.download = `crm_backup_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.json`; a.click(); };
     document.getElementById('restoreBtn').onclick = () => { let inp = document.getElementById('restoreFileInput'); inp.onchange = e => { let file = e.target.files[0]; let reader = new FileReader(); reader.onload = ev => { let data = JSON.parse(ev.target.result); workers = data.workers; services = data.services; clients = data.clients; journal = data.journal; bookings = data.bookings; nextWorkerId = data.nextWorkerId; nextServiceId = data.nextServiceId; nextClientId = data.nextClientId; nextJournalId = data.nextJournalId; nextBookingId = data.nextBookingId; gapMinutes = data.gapMinutes; saveAll(); refreshAll(); alert('Восстановлено'); }; reader.readAsText(file); }; inp.click(); };
 
